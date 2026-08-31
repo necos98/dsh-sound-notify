@@ -1,8 +1,28 @@
-# dsh-sound-notify — bundle patch layer.
-# Con `dsh.bundle.patch` dichiarato nel package.json, `dsh plugin add` monta
-# questo plugin automaticamente (niente modifiche manuali al cordis.patch.yml
-# del profilo): la CLI lo registra in dsh.profile.bundles e questo insert
-# viene applicato come bundle layer al boot.
+# dsh-sound-notify bundle patch: inserts the plugin row over the composed
+# profile. The row registers the "sound-notify" settings namespace used by the
+# web client (browser half); deployment defaults can be changed here. Config
+# is validated at plugin load.
+#
+# Edit this file (or the profile's own cordis.patch.yml, which outranks it) to
+# change defaults, then restart the profile process.
+#
+# PATCH IDS: patch rows target the entry's composed id (options.id —
+# "dsh-sound-notify"), NOT the loader's namespaced runtime id
+# ("include:dsh-sound-notify"). Writing the namespaced id matches nothing and
+# is silently skipped (warn: "patch: entry not found").
+
 - insert:
-    - id: sound-notify
-      name: 'dsh-sound-notify'
+    - id: dsh-sound-notify
+      name: dsh-sound-notify
+      config:
+        enabled: true
+        defaults:
+          soundDone: true
+          soundAttention: true
+          onlyWhenHidden: false
+          volume: 0.25
+
+# To disable this row from the profile's own cordis.patch.yml, target the
+# composed id, not the namespaced runtime id:
+# - id: dsh-sound-notify
+#   disabled: true
