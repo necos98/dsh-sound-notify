@@ -17,25 +17,26 @@ Tutto avviene lato client (Web Audio API, nessuna dipendenza, nessun file audio)
 
 ## Installazione
 
-Il plugin è già installato nel tuo profilo web (`C:\Users\jacob\.dsh\profiles\web`):
-- dipendenza `dsh-sound-notify` in `package.json` (file: → `C:\Users\jacob\Desktop\dsh-plugins\dsh-sound-notify`),
-- riga `sound-notify` in `cordis.patch.yml`.
-
-**Basta riavviare l'app**: arresta `dsh web` e rilancia. Al prossimo avvio il bundle client viene servito e montato dal loader.
-
-Se lo installi da zero in un'altra macchina:
+Installazione **automatica**: il plugin dichiara `dsh.bundle.patch`, quindi
+`dsh plugin add` lo installa nel profilo **e** lo registra da solo come layer
+(`dsh.profile.bundles` in `package.json` del profilo). Non serve modificare a
+mano il `cordis.patch.yml` del profilo.
 
 ```sh
-# 1. installa il package nel profilo (pnpm deve essere su PATH oppure usa corepack)
+# 1. installa (pnpm deve essere su PATH oppure usa corepack)
 dsh plugin --profile web add "file:C:/percorso/dsh-sound-notify"
 
-# 2. aggiungi la riga al cordis.patch.yml del profilo
-- insert:
-    - id: sound-notify
-      name: 'dsh-sound-notify'
-
-# 3. riavvia
+# 2. riavvia l'app: arresta `dsh web` e rilancia
 ```
+
+La riga di montaggio vive nel `cordis.patch.yml` del pacchetto e viene
+applicata automaticamente come bundle layer al boot.
+
+> **Migrazione dal vecchio metodo manuale** (riga `sound-notify` aggiunta a
+> mano nel `cordis.patch.yml` del profilo): rilancia `dsh plugin add` come
+> sopra — la CLI sposta il plugin in `dsh.profile.bundles` — poi rimuovi la
+> riga manuale dal `cordis.patch.yml` del profilo per evitare un insert
+> duplicato.
 
 ## Impostazioni
 
@@ -57,8 +58,10 @@ Le preferenze sono salvate nel documento di impostazioni dell'host (namespace `s
 
 ## Rimozione
 
+Anche qui è tutto automatico: `dsh plugin remove` disinstalla e il reconcile
+toglie il plugin da `dsh.profile.bundles`.
+
 ```sh
-# rimuovi la riga sound-notify da cordis.patch.yml (o commentala)
 dsh plugin --profile web remove dsh-sound-notify
 # riavvia dsh web
 ```
@@ -67,7 +70,8 @@ dsh plugin --profile web remove dsh-sound-notify
 
 ```
 dsh-sound-notify/
-├── package.json        # manifest con dichiarazione dsh.client (platform: web)
+├── package.json        # manifest: dichiara dsh.bundle.patch + dsh.client (platform: web)
+├── cordis.patch.yml    # bundle patch layer: monta il plugin (id: sound-notify)
 ├── lib/
 │   ├── index.js        # metà host: registra il namespace settings "sound-notify"
 │   └── client.js       # metà browser (bundle ModuleLoader): audio + watcher + UI

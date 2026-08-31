@@ -1,0 +1,8 @@
+# dsh-sound-notify — bundle patch layer.
+# Con `dsh.bundle.patch` dichiarato nel package.json, `dsh plugin add` monta
+# questo plugin automaticamente (niente modifiche manuali al cordis.patch.yml
+# del profilo): la CLI lo registra in dsh.profile.bundles e questo insert
+# viene applicato come bundle layer al boot.
+- insert:
+    - id: sound-notify
+      name: 'dsh-sound-notify'
