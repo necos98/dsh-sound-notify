@@ -1,6 +1,6 @@
 {
   "name": "dsh-sound-notify",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH plugin that beeps in the browser when the model finishes responding or asks for your input (questions, approvals, plan reviews).",
   "type": "module",
   "main": "lib/index.js",
@@ -38,6 +38,9 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.4"
   }
 }

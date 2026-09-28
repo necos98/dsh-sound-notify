@@ -1,7 +1,15 @@
 # dsh-sound-notify bundle patch: inserts the plugin row over the composed
-# profile. The row registers the "sound-notify" settings namespace used by the
-# web client (browser half); deployment defaults can be changed here. Config
-# is validated at plugin load.
+# profile. The row enables the plugin and seeds the values of this entry's
+# settings namespace; values already saved in the profile's settings document
+# take precedence. Config is validated against the plugin's exported Config
+# schema at load.
+#
+# SETTINGS NAMESPACE: since DSH 0.1.7-rc.2 the namespace is keyed by this row's
+# `id` below ("dsh-sound-notify") and is built from the volatile fields of that
+# Config schema — the plugin does not register a namespace itself. The row id is
+# therefore also the key under which preferences are persisted, and it must stay
+# in sync with SETTINGS_NS in lib/config.js (asserted by test/index.test.mjs and
+# read by the browser half through ctx.configForms).
 #
 # Edit this file (or the profile's own cordis.patch.yml, which outranks it) to
 # change defaults, then restart the profile process.
@@ -16,11 +24,10 @@
       name: dsh-sound-notify
       config:
         enabled: true
-        defaults:
-          soundDone: true
-          soundAttention: true
-          onlyWhenHidden: false
-          volume: 0.25
+        soundDone: true
+        soundAttention: true
+        onlyWhenHidden: false
+        volume: 0.25
 
 # To disable this row from the profile's own cordis.patch.yml, target the
 # composed id, not the namespaced runtime id:

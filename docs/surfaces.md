@@ -1,7 +1,15 @@
 # Plugin surfaces cheat sheet
 
-Grounded against the SDK installed with **DSH 0.1.1-rc.2**. Copy the snippet
+Grounded against the SDK installed with **DSH 0.1.7-rc.2**. Copy the snippet
 you need into `lib/index.js` (host) or `lib/client.js` (browser half).
+
+> **0.1.7-rc.2 settings break**: `ctx.settings.register(namespace, schema)` on the
+> host and the `settingsScope` client service are **removed**. Settings are now
+> entry-keyed: the host exports a schemastery `Config` schema whose fields are
+> `.volatile()`, the harness publishes one namespace per live profile entry
+> (keyed by `entry.options.id`), and the browser half reads it through
+> `ctx.configForms`. See [Host: Config schema](#host-config-schema-settings)
+> below.
 
 ## Host: custom tool (`ctx.tools` + `defineTool`)
 
@@ -48,22 +56,119 @@ ctx.inject(["webServer"], (serverCtx) => {
 });
 ```
 
-## Host: settings namespace (shared config)
+## Host: Config schema (settings)
 
-The host owns the schema; the browser half reads/writes it via
-`settingsScope`. Schema is a callable with `toJSON` (no schemastery import).
+Since **DSH 0.1.7-rc.2** a plugin does not register a settings namespace. It
+exports a schemastery schema named `Config` from its host module; the harness
+publishes one settings namespace per live profile entry, keyed by
+`entry.options.id` (the `id` of the row in `cordis.patch.yml`), built **only**
+from the `Config` fields marked `.volatile()`.
 
 ```js
-function mySchema(section) {
-  const v = section ?? {};
-  return { enabled: typeof v.enabled === "boolean" ? v.enabled : true };
-}
-mySchema.toJSON = () => ({ type: "object", dict: {} });
+// lib/config.js
+import z from "@deepseek-ai/schemastery";
 
-ctx.inject(["settings"], (settingsCtx) => {
-  settingsCtx.settings.register("my-plugin", mySchema);
+/** The row id in cordis.patch.yml, and the settings namespace key. */
+export const SETTINGS_NS = "my-plugin";
+
+export const Config = z.object({
+  enabled: z.boolean().default(true).volatile(),
+  threshold: z.number().min(0).max(100).default(50).volatile(),
 });
 ```
+
+```js
+// lib/index.js
+export { Config } from "./config.js";
+export const name = "my-plugin";
+export const inject = []; // nothing to register any more
+```
+
+Rules and gotchas:
+
+- **`@deepseek-ai/schemastery` becomes a real `dependencies` entry**, installed
+  in the plugin folder (the host module imports it; the profile's
+  `node_modules` is not guaranteed to resolve it).
+- **At least one `.volatile()` field is mandatory.** `dsh-settings`'
+  `describe()` runs `volatileForm(schema)` and skips the entry entirely when it
+  is `undefined` (`dsh-settings/lib/index.js`, `if (form === void 0) return []`).
+  A schema with no volatile field yields no namespace at all — the client then
+  waits forever for a settings service that will never appear.
+- **The fields are flat.** The published form is a flat projection of the
+  volatile fields, so do not nest them under a `defaults` block: the client
+  reads the top level of the snapshot value.
+- **The entry id is the namespace.** The row's `id` in `cordis.patch.yml`, the
+  `SETTINGS_NS` the browser half asks for, and the persisted section key are the
+  same string. Assert it in a test: a drift there is silent.
+- A `.volatile()` field resolves to a **cosmokit volatile reference** (an object
+  with `get()` and a `Symbol.for("cosmokit.volatile.write")` key), not a plain
+  value. Unwrap before type-checking, the way DSH's own `plainConfig` does:
+
+```js
+// lib/config.js — mirrors @deepseek-ai/dsh-settings' plainConfig
+const VOLATILE_WRITE = Symbol.for("cosmokit.volatile.write");
+
+export function unwrapVolatile(value) {
+  if (typeof value === "object" && value !== null && VOLATILE_WRITE in value) {
+    return unwrapVolatile(value.get());
+  }
+  if (Array.isArray(value)) return value.map(unwrapVolatile);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, unwrapVolatile(child)])
+    );
+  }
+  return value;
+}
+```
+
+`Symbol.for` is deliberate: it identifies the protocol across ESM/CJS copies of
+the shared library, so the check works whatever copy registered the reference.
+Importing `isVolatile` from `@deepseek-ai/cosmokit` instead would add a second
+dependency for one boolean check (`cosmokit` is only a transitive dependency of
+`schemastery`), and importing it from the plugin would still not guarantee the
+same module instance.
+
+## Client: reading and writing settings (`configForms`)
+
+`configForms` is the settings domain's client service. It replaces the removed
+`settingsScope`, and it needs `@deepseek-ai/dsh-client-ui-settings` in
+`dsh.client.inject` in `package.json` (it provides the service).
+
+```js
+const inject = ["slots", "locale", "configForms"];
+
+// In apply(ctx):
+const scope = ctx.configForms.get(SETTINGS_NS); // the patch row id
+const sync = () => applySnapshot(scope.getSnapshot());
+sync();
+ctx.effect(() => scope.subscribe(sync), "my-plugin: settings sync");
+
+// Writes (queued, revision-fenced, Host-validated):
+await scope.set("threshold", 75);
+await scope.unset("threshold");   // re-inherit the composition layer
+await scope.mutate([/* SettingsPathOpView[] */]);
+```
+
+The form's snapshot is the full `ConfigFormSnapshot`:
+
+```ts
+{
+  status: "loading" | "ready" | "unavailable";
+  value: T | undefined;   // last accepted schema-resolved section
+  base: unknown;          // composition layer a cleared field reverts to
+  user: unknown;          // raw user layer; presence marks an override
+  revision: number | undefined;
+  writable: boolean;
+  mode: "host" | "memory";
+}
+```
+
+`value` is already plain: the harness unwraps the volatile references before it
+reaches the browser, so the client reads `snapshot.value.threshold` directly.
+`set`/`unset`/`mutate` resolve to a boolean (Host acceptance) and reject on
+transport failure; `.catch(() => {})` them in UI handlers. See
+`.../@deepseek-ai/dsh-client-ui-settings/lib/types/client/config-form-types.d.ts`.
 
 ## Host ↔ browser: RPC channel (action surface)
 
@@ -149,7 +254,7 @@ Browser half (`lib/client.js`):
 ```
 
 ```js
-// inject: ["slots", "locale", "settingsScope", "connection"]
+// inject: ["slots", "locale", "configForms", "connection"]
 const connection = ctx.get("connection");
 const result = await connection.rpc.call("/my-plugin-actions", "install", { name: "x" });
 if (result.ok) {
@@ -165,7 +270,10 @@ if (result.ok) {
 
 ## Client: UI slots
 
-Slots are injected by name. Common ones (see the web client packages):
+Slots are injected by name. Common ones (see the web client packages). In the
+snippets below `scope` is the config form obtained with
+`ctx.configForms.get(SETTINGS_NS)` — it exposes `getSnapshot()`, `subscribe()`
+and `set()`, exactly like the removed `settingsScope` scope did:
 
 ```js
 // A whole settings tab (label shows in the sidebar of Settings)

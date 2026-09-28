@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFakeClientCtx, findElement, loadClientModule } from "./helpers.mjs";
+import { SETTINGS_NS } from "../lib/config.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { modules, document: sandboxDocument, tones } = loadClientModule(
@@ -22,8 +23,18 @@ test("client module loads and exposes the plugin contract", () => {
   assert.equal(typeof client.apply, "function");
   assert.deepEqual(
     [...client.inject].sort(),
-    ["locale", "sessions", "settingsScope", "slots"].sort()
+    ["configForms", "locale", "sessions", "slots"].sort()
   );
+});
+
+test("client reads the config form of the patch row id", () => {
+  // The entry-keyed contract has one silent failure mode: the client asks
+  // `configForms` for a namespace while the harness publishes it under the row
+  // id in cordis.patch.yml. If they drift, Settings serves defaults forever.
+  const ctx = createFakeClientCtx();
+  client.apply(ctx);
+  assert.deepEqual(ctx.configForms.requested, [SETTINGS_NS]);
+  assert.deepEqual(ctx.configForms.requested, ["dsh-sound-notify"]);
 });
 
 test("client registers dictionaries and a settings row", () => {
@@ -121,26 +132,59 @@ test("client honors the sound toggles live", async () => {
   tones.length = 0;
   finish();
   assert.equal(tones.length, 0); // soundDone=false -> no done sound
-  await ctx.settingsScope.set("soundDone", true);
+  await ctx.configForms.form.set("soundDone", true);
   tones.length = 0;
   finish();
   assert.equal(tones.length, 2); // toggled on -> done sound plays
-  await ctx.settingsScope.set("soundAttention", false);
+  await ctx.configForms.form.set("soundAttention", false);
   tones.length = 0;
   list._set({ ids: ["s1"], byId: { s1: { running: false, pendingInteraction: undefined } } });
   list._set({ ids: ["s1"], byId: { s1: { running: false, pendingInteraction: "question" } } });
   assert.equal(tones.length, 0); // soundAttention=false -> no attention sound
 });
 
+test("client honors the enabled kill switch from the settings document", async () => {
+  const ctx = createFakeClientCtx({ settings: { enabled: true } });
+  client.apply(ctx);
+  const list = sessionsOf(ctx);
+  const finish = () => {
+    list._set({ ids: ["s1"], byId: { s1: { running: true, pendingInteraction: undefined } } });
+    list._set({ ids: ["s1"], byId: { s1: { running: false, pendingInteraction: undefined } } });
+  };
+  await ctx.configForms.form.set("enabled", false);
+  tones.length = 0;
+  finish();
+  assert.equal(tones.length, 0); // disabled -> silent
+  await ctx.configForms.form.set("enabled", true);
+  tones.length = 0;
+  finish();
+  assert.equal(tones.length, 2);
+});
+
+test("client reads the flat top level, not the legacy nested defaults block", () => {
+  // Before v0.2 the patch config was nested ({ defaults: { soundDone } }) while
+  // the client read the top level, so every preference was silently ignored.
+  // The form is now a flat projection: a stale nested block must not be read.
+  const ctx = createFakeClientCtx({
+    settings: { defaults: { soundDone: false, volume: 0 } },
+  });
+  client.apply(ctx);
+  const list = sessionsOf(ctx);
+  list._set({ ids: ["s1"], byId: { s1: { running: true, pendingInteraction: undefined } } });
+  tones.length = 0;
+  list._set({ ids: ["s1"], byId: { s1: { running: false, pendingInteraction: undefined } } });
+  assert.equal(tones.length, 2); // top level has no soundDone -> default true
+});
+
 test("settings row renders and the volume slider writes back to the scope", () => {
   const ctx = createFakeClientCtx({ settings: { volume: 0.25 } });
   client.apply(ctx);
   const row = ctx.slotRegistrations[0].factory().component;
-  const rendered = row({ scope: ctx.settingsScope, t: (key) => key });
+  const rendered = row({ scope: ctx.configForms.form, t: (key) => key });
   assert.ok(rendered && Array.isArray(rendered.__element), "row renders an element tree");
   const range = findElement(rendered, (el) => el.__element[1] && el.__element[1].type === "range");
   assert.ok(range, "volume slider present");
   range.__element[1].onChange({ target: { value: "0.5" } });
-  assert.equal(ctx.settingsScope.getSnapshot().value.volume, 0.5);
+  assert.equal(ctx.configForms.form.getSnapshot().value.volume, 0.5);
   assert.equal(row({ scope: undefined, t: (key) => key }), null); // defensive
 });
